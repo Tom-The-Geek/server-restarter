@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "server-restarter",
+  "version": "${version}",
+  "name": "Server Restarter",
+  "description": "Tool to add a /restart command to Minecraft servers. Requires a wrapper executable to restart the server.",
+  "authors": [
+    "Tom_The_Geek"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "environment": "server",
+  "entrypoints": {
+    "main": [
+      "me.geek.tom.serverrestarter.ServerRestarter"
+    ]
+  },
+  "mixins": [],
+  "depends": {
+    "fabricloader": ">=0.11.1",
+    "minecraft": "1.16.5"
+  }
+}
