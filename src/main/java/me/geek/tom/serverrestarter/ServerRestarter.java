@@ -5,10 +5,14 @@ import com.google.gson.JsonObject;
 import com.mojang.brigadier.context.CommandContext;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v1.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.minecraft.network.MessageType;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.text.LiteralText;
+import net.minecraft.util.Util;
 import org.apache.logging.log4j.LogManager;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -28,27 +32,67 @@ import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
 
 public class ServerRestarter implements ModInitializer {
+
+    private @Nullable String scheduledReason = null;
+    private long lastPlayerSeen;
+
     @Override
     public void onInitialize() {
         CommandRegistrationCallback.EVENT.register((dispatcher, dedicated) -> {
             dispatcher.register(literal("restart")
                     .requires(s -> s.hasPermissionLevel(4))
-                    .then(argument("reason", greedyString())
-                            .executes(ctx -> {
-                                shutdown(ctx, getString(ctx, "reason"));
+                    .then(literal("now")
+                            .then(argument("reason", greedyString())
+                                            .executes(ctx -> {
+                                                now(ctx, getString(ctx, "reason"));
+                                                return 0;
+                                            })
+                                    ).executes(ctx -> {
+                                        now(ctx, "No reason specified");
+                                        return 0;
+                                    })
+                    ).then(literal("schedule")
+                            .then(argument("reason", greedyString())
+                                    .executes(ctx -> {
+                                        schedule(ctx, getString(ctx, "reason"));
+                                        return 0;
+                                    })
+                            ).executes(ctx -> {
+                                schedule(ctx, "No reason specified!");
                                 return 0;
                             })
-                    ).executes(ctx -> {
-                        shutdown(ctx, "No reason specified");
-                        return 0;
-                    })
+                    )
             );
         });
+        ServerTickEvents.END_SERVER_TICK.register(this::tick);
     }
 
-    private void shutdown(CommandContext<ServerCommandSource> ctx, String reason) {
+    private void tick(MinecraftServer server) {
+        if (server.getCurrentPlayerCount() != 0) {
+            this.lastPlayerSeen = System.currentTimeMillis();
+        } else if (scheduledReason != null) {
+            if (System.currentTimeMillis() - this.lastPlayerSeen > 10000L) {
+                restart("[SCHEDULED] " + this.scheduledReason, server);
+            }
+        }
+    }
+
+    private void schedule(CommandContext<ServerCommandSource> ctx, String reason) {
+        if (this.scheduledReason != null) {
+            ctx.getSource().sendError(new LiteralText("Restart already scheduled with reason: " + this.scheduledReason));
+        }
+        ctx.getSource().sendFeedback(new LiteralText("Restart scheduled for when no players are online!"), true);
+        ctx.getSource().getMinecraftServer().getPlayerManager().broadcastChatMessage(new LiteralText("[ALERT] Server will restart when no players are online."), MessageType.SYSTEM, Util.NIL_UUID);
+        this.scheduledReason = reason;
+    }
+
+    private void now(CommandContext<ServerCommandSource> ctx, String reason) {
         ctx.getSource().sendFeedback(new LiteralText("Restarting server..."), true);
         MinecraftServer server = ctx.getSource().getMinecraftServer();
+        restart(reason, server);
+    }
+
+    private void restart(String reason, MinecraftServer server) {
         server.stop(false);
         Path reasonPath = Paths.get(".restart_reason");
         try {
