@@ -147,7 +147,7 @@ public class ServerRestarter implements ModInitializer {
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json");
                 conn.setDoOutput(true);
-                conn.setRequestProperty("User-Agent", "DiscordBot (https://github.com/Geek202, v1)");
+                conn.setRequestProperty("User-Agent", "DiscordBot (https://github.com/Geek202/server-restarter, v1)");
                 Gson gson = new Gson();
                 JsonObject msg = new JsonObject();
                 msg.addProperty("content", "Restart requested: " + reason);
