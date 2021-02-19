@@ -3,6 +3,7 @@ package me.geek.tom.serverrestarter;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.datafixers.util.Pair;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v1.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -12,19 +13,19 @@ import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.text.LiteralText;
 import net.minecraft.util.Util;
 import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
-import java.util.List;
+import java.time.ZonedDateTime;
 
 import static com.mojang.brigadier.arguments.StringArgumentType.getString;
 import static com.mojang.brigadier.arguments.StringArgumentType.greedyString;
@@ -32,12 +33,22 @@ import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
 
 public class ServerRestarter implements ModInitializer {
+    public static final Logger LOGGER = LogManager.getLogger();
 
+    private int timer = 0;
     private @Nullable String scheduledReason = null;
     private long lastPlayerSeen;
+    private Pair<Config.ScheduledAction, ZonedDateTime> action;
 
     @Override
     public void onInitialize() {
+        if (!Config.complete()) {
+            LOGGER.warn("============================================");
+            LOGGER.warn("| server-restarter hasn't been configured! |");
+            LOGGER.warn("============================================");
+            this.timer = -1; // setting to -1 here prevents the action being set later.
+        }
+
         CommandRegistrationCallback.EVENT.register((dispatcher, dedicated) -> {
             dispatcher.register(literal("restart")
                     .requires(s -> s.hasPermissionLevel(4))
@@ -65,6 +76,13 @@ public class ServerRestarter implements ModInitializer {
             );
         });
         ServerTickEvents.END_SERVER_TICK.register(this::tick);
+
+        if (this.timer == 0) {
+            this.action = Config.get().getNextEvent();
+            if (this.action == null) {
+                this.timer = -1; // disables ticking of scheduled actions.
+            }
+        }
     }
 
     private void tick(MinecraftServer server) {
@@ -73,6 +91,23 @@ public class ServerRestarter implements ModInitializer {
         } else if (scheduledReason != null) {
             if (System.currentTimeMillis() - this.lastPlayerSeen > 10000L) {
                 restart("[SCHEDULED] " + this.scheduledReason, server);
+            }
+        }
+
+        if (this.timer != -1) {
+            this.timer = (this.timer + 1) % 20;
+            if (this.timer == 0) {
+                if (ZonedDateTime.now().isAfter(this.action.getSecond())) {
+                    Config.ScheduledAction action = this.action.getFirst();
+                    switch (action.action) {
+                        case Stop:
+                            server.stop(false);
+                            break;
+                        case Restart:
+                            restart(action.message, server);
+                            break;
+                    }
+                }
             }
         }
     }
@@ -104,30 +139,26 @@ public class ServerRestarter implements ModInitializer {
             LogManager.getLogger().error("Failed to save restart reason!", e);
         }
 
-        Path configPath = Paths.get("restart_webhook.txt");
-        if (Files.exists(configPath)) {
+        Config config = Config.get();
+        if (!config.webhookUrl.isEmpty()) {
             try {
-                List<String> lns = Files.readAllLines(configPath, Charset.defaultCharset());
-                if (lns.size() != 0) {
-                    String webhook = lns.get(0);
-                    URL url = new URL(webhook);
-                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                    conn.setRequestMethod("POST");
-                    conn.setRequestProperty("Content-Type", "application/json");
-                    conn.setDoOutput(true);
-                    conn.setRequestProperty("User-Agent", "DiscordBot (https://github.com/Geek202, v1)");
-                    Gson gson = new Gson();
-                    JsonObject msg = new JsonObject();
-                    msg.addProperty("content", "Restart requested: " + reason);
-                    msg.addProperty("username", "Server");
-                    String payload = gson.toJson(msg);
-                    OutputStream os = conn.getOutputStream();
-                    os.write(payload.getBytes(StandardCharsets.UTF_8));
-                    os.close();
-                    int code = conn.getResponseCode();
-                    if (code < 200 || code >= 300) {
-                        throw new IOException(String.valueOf(code));
-                    }
+                URL url = new URL(config.webhookUrl);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setDoOutput(true);
+                conn.setRequestProperty("User-Agent", "DiscordBot (https://github.com/Geek202, v1)");
+                Gson gson = new Gson();
+                JsonObject msg = new JsonObject();
+                msg.addProperty("content", "Restart requested: " + reason);
+                msg.addProperty("username", "Server");
+                String payload = gson.toJson(msg);
+                OutputStream os = conn.getOutputStream();
+                os.write(payload.getBytes(StandardCharsets.UTF_8));
+                os.close();
+                int code = conn.getResponseCode();
+                if (code < 200 || code >= 300) {
+                    throw new IOException(String.valueOf(code));
                 }
             } catch (Exception e) {
                 LogManager.getLogger().error("Failed to send webhook", e);
