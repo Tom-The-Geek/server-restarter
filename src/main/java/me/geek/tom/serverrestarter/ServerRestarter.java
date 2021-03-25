@@ -42,6 +42,16 @@ public class ServerRestarter implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        if (!"true".equals(System.getenv("SERVER_LAUNCHER"))) {
+            LOGGER.warn("=======================================================");
+            LOGGER.warn("|  This server is not wrapped using server-launcher!  |");
+            LOGGER.warn("|   If you are using an outdated version (<= 1.1.0),  |");
+            LOGGER.warn("|     then update or set the environment variable     |");
+            LOGGER.warn("|   SERVER_LAUNCHER to 'true' if you don't want to.   |");
+            LOGGER.warn("=======================================================");
+            return;
+        }
+
         if (!Config.complete()) {
             LOGGER.warn("============================================");
             LOGGER.warn("| server-restarter hasn't been configured! |");
