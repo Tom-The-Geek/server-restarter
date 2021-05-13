@@ -18,6 +18,7 @@
   "mixins": [],
   "depends": {
     "fabricloader": ">=0.11.1",
-    "minecraft": "1.16.5"
+    "minecraft": "1.16.5",
+    "fabric-command-api-v1": "*"
   }
 }
